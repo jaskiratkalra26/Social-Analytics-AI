@@ -1,0 +1,173 @@
+import cv2
+import pytesseract
+import numpy as np
+import os
+import glob
+
+def extract_text_features(frame_folder):
+    """
+    Extracts structured OCR features from sampled frames in a folder.
+    
+    Args:
+        frame_folder (str): Path to the folder containing video frames.
+        
+    Returns:
+        dict: A dictionary containing the following features:
+            - text_presence_ratio: Ratio of frames with detected text.
+            - text_density: Average number of characters per sampled frame.
+            - font_size_score: Average relative area of text bounding boxes.
+            - context_clarity: Ratio of words with length >= 3 to total words.
+            - hook_text_ratio: Ratio of text presence in the first 5 sampled frames.
+            
+    Raises:
+        FileNotFoundError: If the frame_folder does not exist.
+    """
+    
+    if not os.path.exists(frame_folder):
+        raise FileNotFoundError(f"Frame folder not found: {frame_folder}")
+        
+    # Get all image files sorted by name (assuming format frame_XXXX.jpg)
+    # Using simple glob pattern, but ensure consistent sorting
+    all_files = glob.glob(os.path.join(frame_folder, "*.jpg"))
+    if not all_files:
+        # Try checking for other extensions or return empty if none found
+        pass 
+        
+    # Sort strictly by filename to ensure timeline order
+    frame_files = sorted(all_files)
+    
+    if not frame_files:
+        return {
+            "text_presence_ratio": 0.0,
+            "text_density": 0.0,
+            "font_size_score": 0.0,
+            "context_clarity": 0.0,
+            "hook_text_ratio": 0.0
+        }
+    
+    # PROCESS EVERY 3rd FRAME
+    # Sampling: Process every 3rd frame (0, 3, 6, ...)
+    sampled_frames = frame_files[::3]
+    num_sampled = len(sampled_frames)
+    
+    frames_with_text_count = 0
+    total_characters_detected = 0
+    
+    # For Font Size Prominence
+    total_relative_box_area = 0.0
+    total_text_boxes_count = 0
+    
+    # For Context Clarity
+    total_words_count = 0
+    valid_words_count = 0
+    
+    # For Hook Text Ratio (First 5 sampled frames)
+    hook_frames_limit = 5
+    hook_text_frames_count = 0
+    
+    # We iterate through sampled frames
+    for idx, frame_path in enumerate(sampled_frames):
+        img = cv2.imread(frame_path)
+        if img is None:
+            continue
+            
+        height, width, _ = img.shape
+        frame_area = float(width * height)
+        if frame_area == 0:
+            continue
+
+        # Get verbose data including boxes and text
+        # We need both text string (for density/clarity) and boxes (for size)
+        # image_to_data returns structured data
+        try:
+            data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+        except Exception:
+            # If OCR fails entirely for a frame, treat as no text
+            continue
+
+        # Valid text pieces in this frame
+        frame_text_content = ""
+        frame_has_text = False
+        
+        n_boxes = len(data['level'])
+        
+        for i in range(n_boxes):
+            # Check for non-empty text
+            # conf (confidence) is generally -1 for structure items, 0-100 for words
+            # We filter by text content existence
+            text = data['text'][i].strip()
+            
+            if text:
+                frame_has_text = True
+                frame_text_content += text + " "
+                
+                # Font Size Prominence Calculation
+                # box area
+                w = data['width'][i]
+                h = data['height'][i]
+                box_area = w * h
+                
+                # Requirements: "Compute: Average bounding box area across detected text. Normalize by frame area."
+                if frame_area > 0:
+                    total_relative_box_area += (box_area / frame_area)
+                    total_text_boxes_count += 1
+                
+                # Context Clarity Calculation
+                # Requirement: "Split OCR text into words."
+                # image_to_data gives individual words/tokens usually
+                # "Valid word: length >= 3 characters"
+                total_words_count += 1
+                if len(text) >= 3:
+                    valid_words_count += 1
+
+        # Text Presence Logic - per frame
+        if frame_has_text:
+            frames_with_text_count += 1
+            if idx < hook_frames_limit:
+                hook_text_frames_count += 1
+        
+        # Text Density Logic
+        # "Measure how much text appears."
+        # "total_characters_detected / frames_sampled"
+        # We aggregate char count from the re-constructed string or just sum lengths
+        # Using string length from accumulated text (minus extra space at end) or sum of parts
+        # Let's sum lengths of parts to be precise
+        # frame_text_content has trailling space, strip it
+        cleaned_frame_text = frame_text_content.replace(" ", "")
+        total_characters_detected += len(cleaned_frame_text)
+
+    # -----------------------------------------
+    # COMPUTE METRICS
+    # -----------------------------------------
+
+    # 1) Text Presence Ratio
+    # frames_with_text / frames_sampled
+    text_presence_ratio = frames_with_text_count / num_sampled if num_sampled > 0 else 0.0
+
+    # 2) Text Density
+    # total_characters_detected / frames_sampled
+    text_density = total_characters_detected / num_sampled if num_sampled > 0 else 0.0
+
+    # 3) Font Size Prominence
+    # avg_box_area / frame_area (Normalized)
+    # Calculation: (Sum of (box_area/frame_area)) / Total Boxes
+    font_size_score = (total_relative_box_area / total_text_boxes_count) if total_text_boxes_count > 0 else 0.0
+
+    # 4) Context Clarity
+    # valid_words / total_words
+    context_clarity = valid_words_count / total_words_count if total_words_count > 0 else 0.0
+
+    # 5) Hook Text Ratio
+    # text_frames_in_first5 / 5 (or fewer if less frames)
+    # "If fewer than 5 frames exist: use available frames."
+    divisor_hook = min(num_sampled, hook_frames_limit)
+    hook_text_ratio = hook_text_frames_count / divisor_hook if divisor_hook > 0 else 0.0
+
+    return {
+        "text_presence_ratio": float(text_presence_ratio),
+        "text_density": float(text_density),
+        "font_size_score": float(font_size_score),
+        "context_clarity": float(context_clarity),
+        "hook_text_ratio": float(hook_text_ratio)
+    }
+
