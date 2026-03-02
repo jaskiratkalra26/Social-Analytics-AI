@@ -3,13 +3,24 @@ import pytesseract
 import numpy as np
 import os
 import glob
+import sys
 
-def extract_text_features(frame_folder):
+# Add project root to sys.path to import Config
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+try:
+    import Config
+    if hasattr(Config, 'TESSERACT_CMD') and Config.TESSERACT_CMD:
+        pytesseract.pytesseract.tesseract_cmd = Config.TESSERACT_CMD
+except ImportError:
+    pass # Config might not be available if used as standalone
+
+def extract_text_features(frame_folder, verbose=False):
     """
     Extracts structured OCR features from sampled frames in a folder.
     
     Args:
         frame_folder (str): Path to the folder containing video frames.
+        verbose (bool): If True, prints extracted text to console.
         
     Returns:
         dict: A dictionary containing the following features:
@@ -45,9 +56,10 @@ def extract_text_features(frame_folder):
             "hook_text_ratio": 0.0
         }
     
-    # PROCESS EVERY 3rd FRAME
-    # Sampling: Process every 3rd frame (0, 3, 6, ...)
-    sampled_frames = frame_files[::3]
+    # PROCESS FRAMES
+    # Sampling: Process frames based on configured rate
+    sample_rate = getattr(Config, 'OCR_SAMPLE_RATE', 3)
+    sampled_frames = frame_files[::sample_rate]
     num_sampled = len(sampled_frames)
     
     frames_with_text_count = 0
@@ -61,12 +73,19 @@ def extract_text_features(frame_folder):
     total_words_count = 0
     valid_words_count = 0
     
-    # For Hook Text Ratio (First 5 sampled frames)
-    hook_frames_limit = 5
+    # For Hook Text Ratio
+    hook_frames_limit = getattr(Config, 'OCR_HOOK_FRAMES_LIMIT', 5)
     hook_text_frames_count = 0
     
+    # Minimum word length for context clarity
+    min_word_length = getattr(Config, 'OCR_MIN_WORD_LENGTH', 3)
+
     # We iterate through sampled frames
+    print(f"Starting OCR on {num_sampled} frames...")
     for idx, frame_path in enumerate(sampled_frames):
+        if idx % 5 == 0:
+            print(f"Processing frame {idx}/{num_sampled}...")
+            
         img = cv2.imread(frame_path)
         if img is None:
             continue
@@ -81,6 +100,8 @@ def extract_text_features(frame_folder):
         # image_to_data returns structured data
         try:
             data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+        except pytesseract.TesseractNotFoundError:
+            raise RuntimeError("Tesseract is not installed or not in your PATH. See README for installation instructions.")
         except Exception:
             # If OCR fails entirely for a frame, treat as no text
             continue
@@ -115,9 +136,9 @@ def extract_text_features(frame_folder):
                 # Context Clarity Calculation
                 # Requirement: "Split OCR text into words."
                 # image_to_data gives individual words/tokens usually
-                # "Valid word: length >= 3 characters"
+                # "Valid word: length >= min_word_length characters"
                 total_words_count += 1
-                if len(text) >= 3:
+                if len(text) >= min_word_length:
                     valid_words_count += 1
 
         # Text Presence Logic - per frame
@@ -125,7 +146,10 @@ def extract_text_features(frame_folder):
             frames_with_text_count += 1
             if idx < hook_frames_limit:
                 hook_text_frames_count += 1
-        
+            
+            if verbose:
+                print(f"[Frame {idx}] Text detected: '{frame_text_content.strip()}'")
+
         # Text Density Logic
         # "Measure how much text appears."
         # "total_characters_detected / frames_sampled"
