@@ -7,37 +7,43 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import Config
 
-def extract_frames(video_path):
+def extract_frames(video_path, fps_sampling=None, duration=None):
     """
     Extracts frames from a video at a specified frame rate (FPS).
-    Saves the frames to the directory specified in Config.py.
+    Saves the frames to a subdirectory named after the video ID in the directory specified in Config.py.
 
     Args:
         video_path (str): Path to the input video file.
+        fps_sampling (int, optional): Frames per second to extract. Defaults to Config.TARGET_FPS.
+        duration (int, optional): Duration in seconds to extract frames from. If None, processes entire video.
 
     Returns:
-        int: Number of frames extracted.
+        str: Path to the directory containing extract frames.
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
-    # Ensure output directory exists
-    os.makedirs(Config.FRAMES_OUTPUT_DIR, exist_ok=True)
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    output_dir = os.path.join(Config.FRAMES_OUTPUT_DIR, video_name)
+    
+    # Ensure output directory exists and is clean
+    if os.path.exists(output_dir):
+        import shutil
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: Could not open video {video_path}")
-        return 0
+        return output_dir
 
     video_fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    target_fps = fps_sampling if fps_sampling is not None else Config.TARGET_FPS
     
     # Calculate interval to skip frames based on target FPS
-    # If target FPS is 1 and video FPS is 30, we save every 30th frame
-    if Config.TARGET_FPS > 0:
-        frame_interval = int(video_fps / Config.TARGET_FPS)
+    if target_fps > 0:
+        frame_interval = int(video_fps / target_fps)
     else:
-        # Default to saving all frames if target fps is invalid
         frame_interval = 1
     
     # Ensure interval is at least 1
@@ -46,25 +52,28 @@ def extract_frames(video_path):
     frame_count = 0
     saved_count = 0
     
-    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    max_frames = int(duration * video_fps) if duration else float('inf')
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+            
+        if frame_count >= max_frames:
+            break
 
         # Check if this frame should be saved
         if frame_count % frame_interval == 0:
-            frame_filename = f"{video_name}_frame_{saved_count:04d}.jpg"
-            frame_path = os.path.join(Config.FRAMES_OUTPUT_DIR, frame_filename)
+            frame_filename = f"frame_{saved_count:04d}.jpg"
+            frame_path = os.path.join(output_dir, frame_filename)
             cv2.imwrite(frame_path, frame)
             saved_count += 1
 
         frame_count += 1
 
     cap.release()
-    print(f"Extracted {saved_count} frames from {video_path}")
-    return saved_count
+    # print(f"Extracted {saved_count} frames from {video_path} into {output_dir}")
+    return output_dir
 
 if __name__ == "__main__":
     # Example usage

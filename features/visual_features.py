@@ -284,13 +284,13 @@ def composition_features(frame_folder):
         "center_focus_score": float(np.mean(center_scores)) if center_scores else 0.0
     }
 
-def extract_visual_features(frame_folder, scene_list):
+def extract_visual_features(frame_folder, scene_list=None):
     """
     Master function to aggregate all visual features.
     
     Args:
         frame_folder: Path to folder containing extracted frames
-        scene_list: List of tuples (start_time, end_time)
+        scene_list: List of tuples (start_time, end_time). Optional.
         
     Returns:
         Dictionary containing all combined features
@@ -300,6 +300,8 @@ def extract_visual_features(frame_folder, scene_list):
     
     # 1. Scene & Editing Signals
     # Even if scene_list is empty, we want the zeroed-out dictionary
+    if scene_list is None:
+        scene_list = []
     all_features.update(scene_features(scene_list))
     
     # 2. Motion & Energy Signals

@@ -35,6 +35,8 @@ def detect_scenes(video_path: str, threshold: float = None):
     video.downscale_factor = Config.SCENE_DOWNSCALE_FACTOR
 
     # Start video from 0 so we don't miss first scene
+    # We can pass duration argument to detect_scenes if needed, but current usage is whole video
+    # If the user wants only first 3 seconds, we might need a way to limit detection or filter results.
     scene_manager.detect_scenes(video, show_progress=Config.SCENE_SHOW_PROGRESS)
     
     # Returns a list of (FrameTimecode, FrameTimecode) 
